@@ -1,0 +1,112 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Primitives
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(uid) { return isSignedIn() && request.auth.uid == uid; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+
+    // Validation Methods
+    function isValidUser(data) {
+      return data.keys().hasAll(['monthlyBudget', 'createdAt'])
+        && data.keys().size() == 2
+        && data.monthlyBudget is number
+        && data.createdAt is number;
+    }
+
+    function isValidExpense(data) {
+      return data.keys().hasAll(['amount', 'category', 'description', 'date', 'createdAt', 'paymentProvider'])
+        && data.keys().size() == 6
+        && data.amount is number
+        && data.category is string && data.category.size() <= 50
+        && data.description is string && data.description.size() <= 200
+        && data.date is number
+        && data.createdAt is number
+        && data.paymentProvider is string && data.paymentProvider.size() <= 20;
+    }
+
+    function isValidDoNotBuyItem(data) {
+      return data.keys().hasAll(['title', 'reason', 'createdAt'])
+        && data.keys().size() == 3
+        && data.title is string && data.title.size() <= 100
+        && data.reason is string && data.reason.size() <= 300
+        && data.createdAt is number;
+    }
+
+    function isValidBuyLaterItem(data) {
+      return data.keys().hasAll(['title', 'totalAmount', 'months', 'createdAt'])
+        && data.keys().size() == 4
+        && data.title is string && data.title.size() <= 100
+        && data.totalAmount is number
+        && data.months is number
+        && data.createdAt is number;
+    }
+
+    function isValidInvestment(data) {
+      return data.keys().hasAll(['symbol', 'assetType', 'quantity', 'averagePrice', 'createdAt'])
+        && data.keys().size() == 5
+        && data.symbol is string && data.symbol.size() <= 20
+        && data.assetType is string && data.assetType.size() <= 50
+        && data.quantity is number
+        && data.averagePrice is number
+        && data.createdAt is number;
+    }
+
+    // Match users
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if false; // Users shouldn't be listed
+      allow create: if isOwner(userId) && isValidId(userId) && isValidUser(incoming());
+      
+      allow update: if isOwner(userId) && isValidId(userId) && isValidUser(incoming()) && (
+        incoming().diff(existing()).affectedKeys().hasOnly(['monthlyBudget'])
+      );
+
+      // Match expenses subcollection
+      match /expenses/{expenseId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(expenseId);
+        allow list: if isOwner(userId) && isValidId(userId);
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(expenseId);
+        allow create: if isOwner(userId) && isValidId(userId) && isValidId(expenseId) && isValidExpense(incoming());
+        
+        allow update: if isOwner(userId) && isValidId(userId) && isValidId(expenseId) && isValidExpense(incoming()) && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['amount', 'category', 'description', 'date', 'paymentProvider'])
+        );
+      }
+
+      // Match do_not_buy subcollection
+      match /do_not_buy/{itemId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(itemId);
+        allow list: if isOwner(userId) && isValidId(userId);
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(itemId);
+        allow create: if isOwner(userId) && isValidId(userId) && isValidId(itemId) && isValidDoNotBuyItem(incoming());
+        allow update: if false; // Immutable, users can only delete and recreate
+      }
+
+      // Match buy_later subcollection
+      match /buy_later/{itemId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(itemId);
+        allow list: if isOwner(userId) && isValidId(userId);
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(itemId);
+        allow create: if isOwner(userId) && isValidId(userId) && isValidId(itemId) && isValidBuyLaterItem(incoming());
+        allow update: if false; // Immutable for now
+      }
+
+      // Match investments subcollection
+      match /investments/{investmentId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(investmentId);
+        allow list: if isOwner(userId) && isValidId(userId);
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(investmentId);
+        allow create: if isOwner(userId) && isValidId(userId) && isValidId(investmentId) && isValidInvestment(incoming());
+        allow update: if false; // For now immutable, edit by delete + add if necessary (or we can add update logic)
+      }
+    }
+  }
+}

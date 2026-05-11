@@ -1,0 +1,86 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile with global budget limits.",
+      "type": "object",
+      "properties": {
+        "monthlyBudget": { "type": "number", "description": "Global monthly budget limit." },
+        "createdAt": { "type": "number", "description": "Creation timestamp." }
+      },
+      "required": ["monthlyBudget", "createdAt"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "An individual expense.",
+      "type": "object",
+      "properties": {
+        "amount": { "type": "number", "description": "Expense amount." },
+        "category": { "type": "string", "description": "Category of expense." },
+        "description": { "type": "string", "description": "Short description." },
+        "date": { "type": "number", "description": "Timestamp of expense occurrence." },
+        "createdAt": { "type": "number", "description": "Timestamp of record creation." },
+        "paymentProvider": { "type": "string", "description": "Payment provider (e.g. manual, phonepe, gpay)." }
+      },
+      "required": ["amount", "category", "description", "date", "createdAt", "paymentProvider"]
+    },
+    "DoNotBuyItem": {
+      "title": "Do Not Buy Item",
+      "description": "Items the user restricts themselves from buying.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "reason": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["title", "reason", "createdAt"]
+    },
+    "BuyLaterItem": {
+      "title": "Buy Later Item (EMI)",
+      "description": "Planned large purchases for EMI analysis.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "totalAmount": { "type": "number" },
+        "months": { "type": "number" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["title", "totalAmount", "months", "createdAt"]
+    },
+    "Investment": {
+      "title": "Investment",
+      "description": "A user's investment holding.",
+      "type": "object",
+      "properties": {
+        "symbol": { "type": "string" },
+        "assetType": { "type": "string" },
+        "quantity": { "type": "number" },
+        "averagePrice": { "type": "number" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["symbol", "assetType", "quantity", "averagePrice", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profile document."
+    },
+    "/users/{userId}/expenses/{expenseId}": {
+      "schema": { "$ref": "#/entities/Expense" },
+      "description": "User expenses subcollection."
+    },
+    "/users/{userId}/do_not_buy/{itemId}": {
+      "schema": { "$ref": "#/entities/DoNotBuyItem" },
+      "description": "List of restricted purchases."
+    },
+    "/users/{userId}/buy_later/{itemId}": {
+      "schema": { "$ref": "#/entities/BuyLaterItem" },
+      "description": "List of planned purchases."
+    },
+    "/users/{userId}/investments/{investmentId}": {
+      "schema": { "$ref": "#/entities/Investment" },
+      "description": "User's investment portfolio holdings."
+    }
+  }
+}
