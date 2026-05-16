@@ -20,7 +20,9 @@
         "description": { "type": "string", "description": "Short description." },
         "date": { "type": "number", "description": "Timestamp of expense occurrence." },
         "createdAt": { "type": "number", "description": "Timestamp of record creation." },
-        "paymentProvider": { "type": "string", "description": "Payment provider (e.g. manual, phonepe, gpay)." }
+        "paymentProvider": { "type": "string", "description": "Payment provider (e.g. manual, phonepe, gpay)." },
+        "sentiment": { "type": "string", "description": "Sentiment of the expense (e.g. Positive, Regretful)." },
+        "spendingPattern": { "type": "string", "description": "Pattern of the expense (e.g. Subscription, Impulse)." }
       },
       "required": ["amount", "category", "description", "date", "createdAt", "paymentProvider"]
     },
@@ -43,6 +45,7 @@
         "title": { "type": "string" },
         "totalAmount": { "type": "number" },
         "months": { "type": "number" },
+        "interestRate": { "type": "number", "description": "Annual interest rate percentage" },
         "createdAt": { "type": "number" }
       },
       "required": ["title", "totalAmount", "months", "createdAt"]
@@ -56,6 +59,8 @@
         "assetType": { "type": "string" },
         "quantity": { "type": "number" },
         "averagePrice": { "type": "number" },
+        "targetPrice": { "type": "number" },
+        "dropPercentage": { "type": "number" },
         "createdAt": { "type": "number" }
       },
       "required": ["symbol", "assetType", "quantity", "averagePrice", "createdAt"]

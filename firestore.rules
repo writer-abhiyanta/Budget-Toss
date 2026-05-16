@@ -15,21 +15,34 @@ service cloud.firestore {
 
     // Validation Methods
     function isValidUser(data) {
-      return data.keys().hasAll(['monthlyBudget', 'createdAt'])
-        && data.keys().size() == 2
+      let baseValid = data.keys().hasAll(['monthlyBudget', 'createdAt'])
         && data.monthlyBudget is number
         && data.createdAt is number;
+        
+      let allowedKeys = ['monthlyBudget', 'createdAt', 'weeklyReportEnabled', 'lastReportSent'];
+      let hasOnlyAllowedKeys = data.keys().hasOnly(allowedKeys);
+      
+      let weeklyReportEnabledValid = !((data.keys().hasAny(['weeklyReportEnabled'])) && !(data.weeklyReportEnabled is bool));
+      let lastReportSentValid = !((data.keys().hasAny(['lastReportSent'])) && !(data.lastReportSent is number));
+
+      return baseValid && hasOnlyAllowedKeys && weeklyReportEnabledValid && lastReportSentValid;
     }
 
     function isValidExpense(data) {
-      return data.keys().hasAll(['amount', 'category', 'description', 'date', 'createdAt', 'paymentProvider'])
-        && data.keys().size() == 6
+      let hasCore = data.keys().hasAll(['amount', 'category', 'description', 'date', 'createdAt', 'paymentProvider'])
         && data.amount is number
         && data.category is string && data.category.size() <= 50
         && data.description is string && data.description.size() <= 200
         && data.date is number
         && data.createdAt is number
         && data.paymentProvider is string && data.paymentProvider.size() <= 20;
+
+      let hasExtended = data.keys().hasAll(['amount', 'category', 'description', 'date', 'createdAt', 'paymentProvider', 'sentiment', 'spendingPattern'])
+        && data.keys().size() == 8
+        && data.sentiment is string && data.sentiment.size() <= 50
+        && data.spendingPattern is string && data.spendingPattern.size() <= 50;
+
+      return (data.keys().size() == 6 && hasCore) || (hasCore && hasExtended);
     }
 
     function isValidDoNotBuyItem(data) {
@@ -41,21 +54,40 @@ service cloud.firestore {
     }
 
     function isValidBuyLaterItem(data) {
-      return data.keys().hasAll(['title', 'totalAmount', 'months', 'createdAt'])
-        && data.keys().size() == 4
+      let baseValid = data.keys().hasAll(['title', 'totalAmount', 'months', 'createdAt'])
         && data.title is string && data.title.size() <= 100
         && data.totalAmount is number
         && data.months is number
         && data.createdAt is number;
+        
+      let hasOnlyBase = data.keys().size() == 4;
+      let hasInterest = data.keys().size() == 5 && data.keys().hasAll(['interestRate']) && data.interestRate is number;
+      
+      return baseValid && (hasOnlyBase || hasInterest);
     }
 
     function isValidInvestment(data) {
-      return data.keys().hasAll(['symbol', 'assetType', 'quantity', 'averagePrice', 'createdAt'])
-        && data.keys().size() == 5
+      let baseValid = data.keys().hasAll(['symbol', 'assetType', 'quantity', 'averagePrice', 'createdAt'])
         && data.symbol is string && data.symbol.size() <= 20
         && data.assetType is string && data.assetType.size() <= 50
         && data.quantity is number
         && data.averagePrice is number
+        && data.createdAt is number;
+
+      let allowedKeys = ['symbol', 'assetType', 'quantity', 'averagePrice', 'createdAt', 'targetPrice', 'dropPercentage'];
+      let hasOnlyAllowedKeys = data.keys().hasOnly(allowedKeys);
+
+      let targetPriceValid = !((data.keys().hasAny(['targetPrice'])) && !(data.targetPrice is number));
+      let dropPercentageValid = !((data.keys().hasAny(['dropPercentage'])) && !(data.dropPercentage is number));
+
+      return baseValid && hasOnlyAllowedKeys && targetPriceValid && dropPercentageValid;
+    }
+
+    function isValidCategoryBudget(data) {
+      return data.keys().hasAll(['category', 'amount', 'createdAt'])
+        && data.keys().size() == 3
+        && data.category is string && data.category.size() <= 60
+        && data.amount is number
         && data.createdAt is number;
     }
 
@@ -66,7 +98,7 @@ service cloud.firestore {
       allow create: if isOwner(userId) && isValidId(userId) && isValidUser(incoming());
       
       allow update: if isOwner(userId) && isValidId(userId) && isValidUser(incoming()) && (
-        incoming().diff(existing()).affectedKeys().hasOnly(['monthlyBudget'])
+        incoming().diff(existing()).affectedKeys().hasOnly(['monthlyBudget', 'weeklyReportEnabled', 'lastReportSent'])
       );
 
       // Match expenses subcollection
@@ -77,7 +109,7 @@ service cloud.firestore {
         allow create: if isOwner(userId) && isValidId(userId) && isValidId(expenseId) && isValidExpense(incoming());
         
         allow update: if isOwner(userId) && isValidId(userId) && isValidId(expenseId) && isValidExpense(incoming()) && (
-          incoming().diff(existing()).affectedKeys().hasOnly(['amount', 'category', 'description', 'date', 'paymentProvider'])
+          incoming().diff(existing()).affectedKeys().hasOnly(['amount', 'category', 'description', 'date', 'paymentProvider', 'sentiment', 'spendingPattern'])
         );
       }
 
@@ -97,6 +129,17 @@ service cloud.firestore {
         allow delete: if isOwner(userId) && isValidId(userId) && isValidId(itemId);
         allow create: if isOwner(userId) && isValidId(userId) && isValidId(itemId) && isValidBuyLaterItem(incoming());
         allow update: if false; // Immutable for now
+      }
+
+      // Match category_budgets subcollection
+      match /category_budgets/{budgetId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(budgetId);
+        allow list: if isOwner(userId) && isValidId(userId);
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(budgetId);
+        allow create: if isOwner(userId) && isValidId(userId) && isValidId(budgetId) && isValidCategoryBudget(incoming());
+        allow update: if isOwner(userId) && isValidId(userId) && isValidId(budgetId) && isValidCategoryBudget(incoming()) && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['amount'])
+        );
       }
 
       // Match investments subcollection

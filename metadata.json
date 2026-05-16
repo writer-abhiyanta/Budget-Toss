@@ -1,6 +1,6 @@
 {
   "name": "Budget Toss",
   "description": "An anime book-themed expense tracker with Google Login, AI analysis of spending, budgeting, EMI calculation, and financial learning resources.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["camera"],
   "majorCapabilities": []
 }

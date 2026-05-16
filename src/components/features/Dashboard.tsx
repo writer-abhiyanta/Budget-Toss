@@ -3,13 +3,22 @@ import { useAuth } from '../../lib/AuthContext';
 import { collection, query, onSnapshot, orderBy } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../../lib/firebase';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid, ReferenceLine } from 'recharts';
+import { GoogleGenAI } from '@google/genai';
+import { Sparkles, RefreshCw, Mail, CheckCircle2 } from 'lucide-react';
+import { useAuth } from '../../lib/AuthContext';
 
 export function Dashboard() {
-  const { user, monthlyBudget, setMonthlyBudget } = useAuth();
+  const { user, monthlyBudget, setMonthlyBudget, weeklyReportEnabled, setWeeklyReportEnabled, lastReportSent, setLastReportSent } = useAuth();
   const [expenses, setExpenses] = useState<any[]>([]);
+  const [categoryBudgets, setCategoryBudgets] = useState<any[]>([]);
   const [editingBudget, setEditingBudget] = useState(false);
   const [tempBudget, setTempBudget] = useState(monthlyBudget.toString());
   const [activeTab, setActiveTab] = useState<'domains' | 'monthly' | 'quarterly'>('domains');
+  
+  // AI State
+  const [aiFeedback, setAiFeedback] = useState<string>('');
+  const [isAiLoading, setIsAiLoading] = useState(false);
+  const [emailSending, setEmailSending] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -19,7 +28,13 @@ export function Dashboard() {
       setExpenses(data);
     }, (err) => handleFirestoreError(err, OperationType.LIST, `users/${user.uid}/expenses`));
     
-    return () => unsub();
+    const q2 = query(collection(db, `users/${user.uid}/category_budgets`));
+    const unsub2 = onSnapshot(q2, (snap) => {
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setCategoryBudgets(data);
+    }, (err) => handleFirestoreError(err, OperationType.LIST, `users/${user.uid}/category_budgets`));
+    
+    return () => { unsub(); unsub2(); };
   }, [user]);
 
   // Calculations
@@ -38,6 +53,15 @@ export function Dashboard() {
   const currentDay = new Date().getDate();
   const averageDailySpent = (totalSpent / currentDay).toFixed(2);
   const projectedMonthly = (parseFloat(averageDailySpent) * daysInMonth).toFixed(2);
+
+  // Auto trigger weekly email
+  useEffect(() => {
+    const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    if (weeklyReportEnabled && expenses.length > 0 && user?.email && (!lastReportSent || (now - lastReportSent) > WEEK_MS)) {
+      sendWeeklyEmailReport(true);
+    }
+  }, [weeklyReportEnabled, lastReportSent, expenses.length, user]);
 
   const categoryTotals = thisMonthExpenses.reduce((acc, curr) => {
     acc[curr.category] = (acc[curr.category] || 0) + curr.amount;
@@ -81,8 +105,94 @@ export function Dashboard() {
     }
   };
 
+  const handleGetAIFeedback = async () => {
+    setIsAiLoading(true);
+    try {
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) throw new Error("Gemini API key is not configured");
+      const ai = new GoogleGenAI({ apiKey });
+      
+      const compactExpenses = thisMonthExpenses.length > 0 
+        ? thisMonthExpenses.map(e => `${e.amount} on ${e.category} (${e.description || ''})`).slice(0, 50).join(', ')
+        : 'No expenses yet. They are either being frugal or forgot to log.';
+      
+      const prompt = `You are an anime-themed AI financial advisor with a slightly sassy but helpful personality. 
+      Analyze these recent expenses and the overall budget.
+      Total spent this month: ${totalSpent} (Budget limit: ${monthlyBudget || 'Not set'}).
+      Projected spend: ${projectedMonthly}.
+      Expenses: [${compactExpenses}]
+      
+      Provide a short, punchy 2-3 sentence comment on their spending habits or their budget setup. You can gently roast them if they are overspending or buying too many unnecessary things, praise them if they are doing well, or if they have no expenses, roast them for having a budget but not tracking or praise their ultimate frugality. Use markdown for styling if needed. Keep it very conversational.`;
+      
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: prompt
+      });
+      
+      setAiFeedback(response.text || "I'm speechless... your financial data broke my circuits!");
+    } catch (e) {
+      console.error("AI Feedback error", e);
+      setAiFeedback("Oops, my connection to the financial matrix was interrupted. Try again!");
+    } finally {
+      setIsAiLoading(false);
+    }
+  };
+
+  const sendWeeklyEmailReport = async (isAuto = false) => {
+    if (!user?.email || expenses.length === 0) return;
+    
+    if (!isAuto) setEmailSending(true);
+
+    try {
+      const recentExpenses = expenses.slice(0, 10);
+      const expenseList = recentExpenses.map(e => `<li>₹${e.amount} - ${e.category} (${e.description || 'No description'})</li>`).join('');
+      
+      let domainAlertsHtml = '';
+      if (categoryBudgets.length > 0) {
+        domainAlertsHtml = '<h4>Domain Budget Alerts</h4><ul>';
+        categoryBudgets.forEach(budget => {
+          const spent = categoryTotals[budget.category] || 0;
+          const isDomainOver = spent > budget.amount;
+          domainAlertsHtml += `<li><strong>${budget.category}:</strong> Spent ₹${spent} / Limit ₹${budget.amount} ${isDomainOver ? '<span style="color:red;font-weight:bold;">(⚠️ EXCEEDED)</span>' : ''}</li>`;
+        });
+        domainAlertsHtml += '</ul><br/>';
+      }
+
+      const emailBody = `
+        <h3>Weekly Budget & Expenditure Report</h3>
+        <p><strong>Total Spent This Month:</strong> ₹${totalSpent}</p>
+        <p><strong>Monthly Budget Target:</strong> ₹${monthlyBudget}</p>
+        <p><strong>Average Daily Spent:</strong> ₹${averageDailySpent}</p>
+        <p><strong>Projected Reach:</strong> ₹${projectedMonthly}</p>
+        <br/>
+        ${domainAlertsHtml}
+        <h4>Recent Expenses (Top 10)</h4>
+        <ul>${expenseList}</ul>
+        ${isOverBudget ? '<br/><p style="color: red; font-weight: bold;">⚠️ You have currently exceeded your overall monthly budget.</p>' : ''}
+      `;
+
+      await fetch('/api/send-alert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: user.email,
+          subject: 'Your Weekly Expend Report',
+          message: emailBody
+        })
+      });
+      
+      await setLastReportSent(Date.now());
+      if (!isAuto) alert('Weekly Report Email Sent!');
+    } catch (e) {
+      console.error(e);
+      if (!isAuto) alert('Failed to send report. Please check server settings.');
+    } finally {
+      if (!isAuto) setEmailSending(false);
+    }
+  };
+
   return (
-    <div className="flex flex-col gap-4 h-full">
+    <div className="flex flex-col gap-4 h-full pb-8">
       {/* Top Row: General Stats */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="md:col-span-2 anime-card flex flex-col justify-between">
@@ -162,6 +272,74 @@ export function Dashboard() {
           </div>
         </div>
       )}
+
+      {/* Email Alerts Section */}
+      <div className="anime-card !bg-white !border-emerald-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="bg-emerald-100 p-2 rounded-full text-emerald-600">
+            <Mail className="w-5 h-5" />
+          </div>
+          <div>
+            <h3 className="text-sm font-bold uppercase text-emerald-900">Weekly Budget Reports</h3>
+            <p className="text-xs text-emerald-700 font-medium">Get a weekly summary of your expenses securely delivered to {user?.email || 'your email'}.</p>
+          </div>
+        </div>
+        
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <button 
+            onClick={() => setWeeklyReportEnabled(!weeklyReportEnabled)}
+            className={`flex-1 sm:flex-none text-xs font-bold uppercase py-2 px-3 rounded border-2 transition-all flex items-center justify-center gap-2 ${weeklyReportEnabled ? 'bg-emerald-100 border-emerald-500 text-emerald-800' : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100'}`}
+          >
+            {weeklyReportEnabled && <CheckCircle2 className="w-3 h-3 text-emerald-600" />}
+            {weeklyReportEnabled ? 'Enabled' : 'Disabled'}
+          </button>
+          
+          <button 
+            onClick={() => sendWeeklyEmailReport(false)}
+            disabled={emailSending}
+            className="flex-1 sm:flex-none anime-button !py-2 !px-3 font-bold !text-xs whitespace-nowrap"
+          >
+            {emailSending ? 'Sending...' : 'Send Now'}
+          </button>
+        </div>
+      </div>
+
+      {/* AI Roast / Advice Section */}
+      <div className="anime-card !bg-emerald-50 !border-emerald-500 relative overflow-hidden group">
+        <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+          <Sparkles className="w-24 h-24 text-emerald-900" />
+        </div>
+        
+        <div className="relative z-10 flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
+          <div className="flex-1">
+            <h3 className="text-sm font-black uppercase text-emerald-900 tracking-wider flex items-center gap-2 mb-2">
+              <Sparkles className="w-5 h-5" /> 
+              Roast Budget
+            </h3>
+            {aiFeedback ? (
+              <p className="text-emerald-800 font-medium leading-relaxed italic border-l-4 border-emerald-400 pl-3 py-1 bg-white/50 rounded-r-lg">
+                "{aiFeedback}"
+              </p>
+            ) : (
+              <p className="text-emerald-700 text-sm font-bold opacity-80">
+                Curious what a highly rational yet vaguely sassy AI thinks of your spending? 
+              </p>
+            )}
+          </div>
+          
+          <button 
+            onClick={handleGetAIFeedback}
+            disabled={isAiLoading}
+            className="anime-button shrink-0 flex items-center gap-2 shadow-sm"
+          >
+            {isAiLoading ? (
+              <><RefreshCw className="w-4 h-4 animate-spin" /> Analyzing...</>
+            ) : (
+              <><Sparkles className="w-4 h-4" /> {aiFeedback ? 'Roast Me Again' : 'Analyze Patterns'}</>
+            )}
+          </button>
+        </div>
+      </div>
 
       {/* Main charting grid */}
       <div className="flex-1 min-h-[350px] anime-card flex flex-col">
