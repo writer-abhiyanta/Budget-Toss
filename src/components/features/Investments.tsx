@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from '../../lib/AuthContext';
 import { collection, query, onSnapshot, orderBy, doc, setDoc, deleteDoc } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../../lib/firebase';
@@ -21,7 +21,7 @@ export function Investments() {
   const [emailStatus, setEmailStatus] = useState('');
   
   // Track which alerts we've already sent in this session to avoid spam
-  const [sentAlerts, setSentAlerts] = useState<Set<string>>(new Set());
+  const sentAlerts = useRef<Set<string>>(new Set());
 
   const ASSET_TYPES = [
     { value: 'stock', label: 'Stock' },
@@ -161,39 +161,42 @@ export function Investments() {
   const COLORS = ['green', 'yellow', 'purple', 'orange', 'pink'];
 
   // Generate alerts
-  const alerts: { id: string, message: string, type: 'up' | 'down' }[] = [];
-  items.forEach(item => {
-    const liveData = marketData[item.symbol];
-    if (liveData && liveData.close) {
-      const currentPrice = parseFloat(liveData.close);
-      
-      if (item.targetPrice && currentPrice >= item.targetPrice) {
-        alerts.push({
-          id: `${item.id}-target`,
-          message: `${item.symbol} reached or exceeded your target price of ${item.targetPrice.toLocaleString()}! Current: ${currentPrice.toLocaleString()}`,
-          type: 'up'
-        });
-      }
-
-      if (item.dropPercentage && item.averagePrice) {
-        const dropRatio = (item.averagePrice - currentPrice) / item.averagePrice;
-        const dropPercent = dropRatio * 100;
-        if (dropPercent >= item.dropPercentage) {
-          alerts.push({
-            id: `${item.id}-drop`,
-            message: `${item.symbol} dropped by ${dropPercent.toFixed(2)}% (Limit: ${item.dropPercentage}%). Current: ${currentPrice.toLocaleString()}`,
-            type: 'down'
+  const alerts = useMemo(() => {
+    const generatedAlerts: { id: string, message: string, type: 'up' | 'down' }[] = [];
+    items.forEach(item => {
+      const liveData = marketData[item.symbol];
+      if (liveData && liveData.close) {
+        const currentPrice = parseFloat(liveData.close);
+        
+        if (item.targetPrice && currentPrice >= item.targetPrice) {
+          generatedAlerts.push({
+            id: `${item.id}-target`,
+            message: `${item.symbol} reached or exceeded your target price of ${item.targetPrice.toLocaleString()}! Current: ${currentPrice.toLocaleString()}`,
+            type: 'up'
           });
         }
+
+        if (item.dropPercentage && item.averagePrice) {
+          const dropRatio = (item.averagePrice - currentPrice) / item.averagePrice;
+          const dropPercent = dropRatio * 100;
+          if (dropPercent >= item.dropPercentage) {
+            generatedAlerts.push({
+              id: `${item.id}-drop`,
+              message: `${item.symbol} dropped by ${dropPercent.toFixed(2)}% (Limit: ${item.dropPercentage}%). Current: ${currentPrice.toLocaleString()}`,
+              type: 'down'
+            });
+          }
+        }
       }
-    }
-  });
+    });
+    return generatedAlerts;
+  }, [items, marketData]);
 
   useEffect(() => {
     if (alerts.length > 0 && user?.email) {
       alerts.forEach(async (alert) => {
-        if (!sentAlerts.has(alert.id)) {
-          setSentAlerts(prev => new Set(prev).add(alert.id));
+        if (!sentAlerts.current.has(alert.id)) {
+          sentAlerts.current.add(alert.id);
           try {
             setEmailStatus(`Sending alert to ${user.email}...`);
             const res = await fetch('/api/send-alert', {
@@ -203,7 +206,7 @@ export function Investments() {
               },
               body: JSON.stringify({
                 to: user.email,
-                subject: `Applet Market Alert: ${alert.message.substring(0, 30)}...`,
+                subject: `Market Alert: ${alert.message.substring(0, 30)}...`,
                 message: alert.message
               })
             });
@@ -220,7 +223,7 @@ export function Investments() {
         }
       });
     }
-  }, [alerts, sentAlerts, user]);
+  }, [alerts, user]);
 
   return (
     <div className="space-y-6 flex-1 h-full">

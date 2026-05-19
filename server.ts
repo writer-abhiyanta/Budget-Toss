@@ -22,7 +22,8 @@ async function startServer() {
       const smtpPass = process.env.SMTP_PASSWORD;
 
       if (!smtpEmail || !smtpPass) {
-        return res.status(500).json({ error: 'SMTP credentials not configured on the server.' });
+        console.log(`[Mock Email] Would have sent alert to ${to}: ${subject}`);
+        return res.json({ success: true, mocked: true });
       }
 
       const transporter = nodemailer.createTransport({
@@ -34,12 +35,12 @@ async function startServer() {
       });
 
       const mailOptions = {
-        from: smtpEmail,
+        from: `"Budget Toss" <${smtpEmail}>`,
         to: to || smtpEmail, // Default to sending to self if not specified
         subject: subject,
         text: message,
         html: `<div style="font-family: sans-serif; color: #065f46; background: #ecfdf5; padding: 20px; border-radius: 8px;">
-          <h2 style="margin-top: 0; color: #064e3b; border-bottom: 2px solid #34d399; padding-bottom: 8px;">FinTech Anime Planner</h2>
+          <h2 style="margin-top: 0; color: #064e3b; border-bottom: 2px solid #34d399; padding-bottom: 8px;">Budget Toss Alert</h2>
           <div style="font-size: 16px; line-height: 1.5; color: #064e3b;">${message}</div>
         </div>`
       };

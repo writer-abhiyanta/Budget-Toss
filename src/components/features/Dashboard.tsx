@@ -5,7 +5,6 @@ import { db, handleFirestoreError, OperationType } from '../../lib/firebase';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid, ReferenceLine } from 'recharts';
 import { GoogleGenAI } from '@google/genai';
 import { Sparkles, RefreshCw, Mail, CheckCircle2 } from 'lucide-react';
-import { useAuth } from '../../lib/AuthContext';
 
 export function Dashboard() {
   const { user, monthlyBudget, setMonthlyBudget, weeklyReportEnabled, setWeeklyReportEnabled, lastReportSent, setLastReportSent } = useAuth();
@@ -64,7 +63,9 @@ export function Dashboard() {
   }, [weeklyReportEnabled, lastReportSent, expenses.length, user]);
 
   const categoryTotals = thisMonthExpenses.reduce((acc, curr) => {
-    acc[curr.category] = (acc[curr.category] || 0) + curr.amount;
+    if (curr.amount > 0) {
+      acc[curr.category] = (acc[curr.category] || 0) + curr.amount;
+    }
     return acc;
   }, {} as Record<string, number>);
 
@@ -285,7 +286,7 @@ export function Dashboard() {
           </div>
         </div>
         
-        <div className="flex items-center gap-2 w-full sm:w-auto">
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
           <button 
             onClick={() => setWeeklyReportEnabled(!weeklyReportEnabled)}
             className={`flex-1 sm:flex-none text-xs font-bold uppercase py-2 px-3 rounded border-2 transition-all flex items-center justify-center gap-2 ${weeklyReportEnabled ? 'bg-emerald-100 border-emerald-500 text-emerald-800' : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100'}`}

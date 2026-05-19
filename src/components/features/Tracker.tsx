@@ -12,6 +12,16 @@ export const CATEGORIES = [
   'Book', 'Entertainment', 'Bike Good', 'Online Learning', 'Other', 'Domain'
 ];
 
+export const PATTERNS = [
+  '',
+  'Subscription',
+  'Late night craving',
+  'Weekend fun',
+  'Utility',
+  'Impulse',
+  'Unknown'
+];
+
 export function Tracker() {
   const { user } = useAuth();
   const [expenses, setExpenses] = useState<any[]>([]);
@@ -35,7 +45,7 @@ export function Tracker() {
   // Edit State
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
 
-  const [pendingPayment, setPendingPayment] = useState<{data: any, provider: string, url: string} | null>(null);
+  const [pendingPayment, setPendingPayment] = useState<{data: any, provider: string, url: string, standardUrl: string} | null>(null);
 
   // Scanner State
   const [showScanner, setShowScanner] = useState(false);
@@ -117,10 +127,19 @@ export function Tracker() {
       const standardUpiUrl = `upi://pay?pa=${pa}&pn=Merchant&am=${am}&cu=INR&tn=${tn}`;
       let url = standardUpiUrl;
       
+      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      const isAndroid = /Android/i.test(navigator.userAgent);
+      
       if (paymentProvider === 'gpay') {
-        url = `gpay://upi/pay?pa=${pa}&pn=Merchant&am=${am}&cu=INR&tn=${tn}`;
+        if (isAndroid) {
+          url = `intent://pay?pa=${pa}&pn=Merchant&am=${am}&cu=INR&tn=${tn}#Intent;scheme=upi;package=com.google.android.apps.nbu.paisa.user;end`;
+        } else {
+          url = `gpay://upi/pay?pa=${pa}&pn=Merchant&am=${am}&cu=INR&tn=${tn}`;
+        }
       } else if (paymentProvider === 'phonepe') {
-        url = `phonepe://pay?pa=${pa}&pn=Merchant&am=${am}&cu=INR&tn=${tn}`;
+        // PhonePe intentionally blocks intent:// schemes with 'safety reasons' if no signature/mc is present.
+        // Forcing standard UPI URI allows the OS chooser where PhonePe will accept it as a user-initiated P2P payment.
+        url = standardUpiUrl;
       }
       
       const data = {
@@ -134,9 +153,8 @@ export function Tracker() {
         ...(spendingPattern && { spendingPattern }),
       };
       
-      setPendingPayment({ data, provider: paymentProvider, url });
+      setPendingPayment({ data, provider: paymentProvider, url, standardUrl: standardUpiUrl });
       
-      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
       if (isMobile) {
         const a = document.createElement('a');
         a.href = url;
@@ -173,6 +191,33 @@ export function Tracker() {
       setEditingExpenseId(null);
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, `users/${user.uid}/expenses/${expenseId}`);
+    }
+  };
+
+  const handleReceiveMoney = async () => {
+    if (!user || !receiveAmount) return;
+    try {
+      const expenseId = crypto.randomUUID();
+      const parsedAmount = parseFloat(receiveAmount);
+      if (isNaN(parsedAmount) || parsedAmount <= 0) return;
+      
+      const data = {
+        amount: -parsedAmount, // Negative since expenses are positive in this app
+        category: 'Income',
+        description: receiveNote || 'Collection',
+        date: Date.now(),
+        createdAt: Date.now(),
+        paymentProvider: 'received',
+      };
+      
+      await setDoc(doc(db, `users/${user.uid}/expenses/${expenseId}`), data, { merge: true });
+      
+      setReceiveAmount('');
+      setReceiveNote('Budget Toss Collection');
+      // Briefly show success or jump to logs? 
+      // It auto-adds to list, so user will see it in the list.
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, `users/${user.uid}/expenses/${crypto.randomUUID()}`);
     }
   };
 
@@ -222,7 +267,7 @@ export function Tracker() {
       
       const prompt = `Parse this text or receipt data and return ONLY a JSON object.
       The text is: "${aiText}"
-      JSON schema: { "amount": number, "description": "string (short item name)", "category": "Pick exactly one from: ${CATEGORIES.join(', ')}", "upiId": "string (extract UPI ID if present like name@bank, or empty string)", "sentiment": "string (e.g. Positive, Neutral, Negative, Regretful, Necessary, Impulse)", "spendingPattern": "string (e.g. Subscription, Late night craving, Weekend fun, Utility, Unknown)" }`;
+      JSON schema: { "amount": number, "description": "string (short item name)", "category": "Pick exactly one from: ${CATEGORIES.join(', ')}", "upiId": "string (extract UPI ID if present like name@bank, or empty string)", "sentiment": "string (e.g. Positive, Neutral, Negative, Regretful, Necessary, Impulse)", "spendingPattern": "Pick exactly one from (or empty): ${PATTERNS.filter(Boolean).join(', ')}" }`;
       
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
@@ -269,7 +314,7 @@ export function Tracker() {
       const base64Data = await base64Promise;
 
       const prompt = `Analyze this receipt image. Return ONLY a JSON object.
-      JSON schema: { "amount": number (total amount), "description": "string (merchant or short summary)", "category": "Pick exactly one from: ${CATEGORIES.join(', ')}", "upiId": "string (extract UPI ID if present, or empty string)", "sentiment": "string (e.g. Positive, Neutral, Negative, Regretful, Necessary, Impulse)", "spendingPattern": "string (e.g. Subscription, Late night craving, Weekend fun, Utility, Unknown)" }`;
+      JSON schema: { "amount": number (total amount), "description": "string (merchant or short summary)", "category": "Pick exactly one from: ${CATEGORIES.join(', ')}", "upiId": "string (extract UPI ID if present, or empty string)", "sentiment": "string (e.g. Positive, Neutral, Negative, Regretful, Necessary, Impulse)", "spendingPattern": "Pick exactly one from (or empty): ${PATTERNS.filter(Boolean).join(', ')}" }`;
       
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
@@ -300,7 +345,11 @@ export function Tracker() {
     try {
       const parsed = JSON.parse(raw);
       setAmount(parsed.amount?.toString() || '');
-      setCategory(parsed.category || 'Other');
+      
+      let parsedCategory = parsed.category || 'Other';
+      if (parsed.spendingPattern === 'Subscription') parsedCategory = 'Other';
+      
+      setCategory(parsedCategory);
       setDescription(parsed.description || 'AI Parsed Transaction');
       setSentiment(parsed.sentiment || '');
       setSpendingPattern(parsed.spendingPattern || '');
@@ -438,6 +487,16 @@ export function Tracker() {
                     className="w-40 h-40 border-4 border-emerald-100 rounded-lg shadow-sm"
                   />
                   {receiveAmount && <p className="text-xl font-black mt-2 text-emerald-900">₹{receiveAmount}</p>}
+                  
+                  {receiveAmount && (
+                    <button 
+                      onClick={handleReceiveMoney}
+                      className="mt-4 anime-btn w-full text-xs py-2.5 bg-emerald-700 text-white shadow-emerald-900 shadow-[2px_2px_0px_0px]"
+                    >
+                      <Sparkles className="w-3 h-3 inline-block mr-1" />
+                      Add to Log (Received)
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -474,7 +533,7 @@ export function Tracker() {
                   {!/iPhone|iPad|iPod|Android/i.test(navigator.userAgent) && (
                     <div className="mb-4 p-3 bg-emerald-50 rounded text-center w-full border border-emerald-200">
                       <p className="text-[10px] uppercase font-bold text-emerald-700 mb-2">Scan to Pay (Desktop)</p>
-                      <img src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(pendingPayment.url)}`} className="w-32 h-32 mx-auto mix-blend-multiply border-2 border-white rounded shadow-sm" />
+                      <img src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(pendingPayment.standardUrl)}`} className="w-32 h-32 mx-auto mix-blend-multiply border-2 border-white rounded shadow-sm" />
                     </div>
                   )}
 
@@ -566,14 +625,19 @@ export function Tracker() {
                 </div>
                 <div>
                   <label className="block text-[10px] uppercase font-bold text-emerald-700 mb-1 flex items-center gap-1">Pattern <Sparkles className="w-3 h-3 text-emerald-500" /></label>
-                  <input 
-                    type="text" 
+                  <select 
                     value={spendingPattern} 
-                    onChange={(e) => setSpendingPattern(e.target.value)}
-                    className="anime-input"
-                    placeholder="e.g. Subscription"
-                    maxLength={50}
-                  />
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setSpendingPattern(val);
+                      if (val === 'Subscription') setCategory('Other');
+                    }}
+                    className="anime-input bg-white"
+                  >
+                    {PATTERNS.map(p => (
+                      <option key={p} value={p}>{p || 'None'}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
               
@@ -596,7 +660,7 @@ export function Tracker() {
                     </button>
                   </div>
                 )}
-                <button type="submit" className="anime-button w-full">{editingExpenseId ? 'Update Expense' : 'Log Only (No Payment)'}</button>
+                <button type="submit" className="anime-button w-full">{editingExpenseId ? 'Update Expense' : 'Add to Log'}</button>
               </div>
             </form>
             </div>
